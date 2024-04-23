@@ -15,6 +15,12 @@
 #ifndef R_LARCH_64
 #define R_LARCH_64		2
 #endif
+#ifndef R_LARCH_ADD8
+#define R_LARCH_ADD8		47
+#endif
+#ifndef R_LARCH_SUB8
+#define R_LARCH_SUB8		52
+#endif
 #ifndef R_LARCH_32_PCREL
 #define R_LARCH_32_PCREL	99
 #endif
@@ -26,5 +32,7 @@
 #define R_DATA64		R_LARCH_32_PCREL
 #define R_TEXT32		R_LARCH_32_PCREL
 #define R_TEXT64		R_LARCH_32_PCREL
+
+#define PREFER_SYM		1
 
 #endif /* _OBJTOOL_ARCH_ELF_H */

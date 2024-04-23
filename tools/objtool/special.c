@@ -58,6 +58,14 @@ void __weak arch_handle_alternative(unsigned short feature, struct special_alt *
 {
 }
 
+bool __weak arch_set_group_len(unsigned int *orig_len, unsigned int *new_len, struct elf *elf,
+			       struct section *sec, unsigned long orig_off, unsigned long new_off)
+{
+	*orig_len = *(unsigned char *)(sec->data->d_buf + orig_off);
+	*new_len = *(unsigned char *)(sec->data->d_buf + new_off);
+	return true;
+}
+
 static void reloc_to_sec_off(struct reloc *reloc, struct section **sec,
 			     unsigned long *off)
 {
@@ -77,11 +85,11 @@ static int get_alt_entry(struct elf *elf, const struct special_entry *entry,
 	alt->group = entry->group;
 	alt->jump_or_nop = entry->jump_or_nop;
 
-	if (alt->group) {
-		alt->orig_len = *(unsigned char *)(sec->data->d_buf + offset +
-						   entry->orig_len);
-		alt->new_len = *(unsigned char *)(sec->data->d_buf + offset +
-						  entry->new_len);
+	if (alt->group &&
+	    !arch_set_group_len(&alt->orig_len, &alt->new_len, elf, sec,
+				offset + entry->orig_len, offset + entry->new_len)) {
+		WARN("can't set group len");
+		return -1;
 	}
 
 	if (entry->feature) {

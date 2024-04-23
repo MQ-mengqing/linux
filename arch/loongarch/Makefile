@@ -79,11 +79,14 @@ LDFLAGS_vmlinux			+= -static -n -nostdlib
 # relocs, for avoiding unnecessary GOT accesses. It is harmless to not have
 # support though.
 ifdef CONFIG_AS_HAS_EXPLICIT_RELOCS
-cflags-y			+= $(call cc-option,-mexplicit-relocs)
+KBUILD_CFLAGS_KERNEL		+= $(call cc-option,-mexplicit-relocs=auto)
 KBUILD_CFLAGS_KERNEL		+= $(call cc-option,-mdirect-extern-access)
 KBUILD_CFLAGS_KERNEL		+= $(call cc-option,-fdirect-access-external-data)
+KBUILD_CFLAGS_MODULE		+= $(call cc-option,-mexplicit-relocs)
 KBUILD_AFLAGS_MODULE		+= $(call cc-option,-fno-direct-access-external-data)
 KBUILD_CFLAGS_MODULE		+= $(call cc-option,-fno-direct-access-external-data)
+KBUILD_AFLAGS_MODULE		+= $(call cc-option,-mno-relax) $(call cc-option,-Wa$(comma)-mno-relax)
+KBUILD_CFLAGS_MODULE		+= $(call cc-option,-mno-relax) $(call cc-option,-Wa$(comma)-mno-relax)
 else
 cflags-y			+= $(call cc-option,-mno-explicit-relocs)
 KBUILD_AFLAGS_KERNEL		+= -Wa,-mla-global-with-pcrel
@@ -92,8 +95,6 @@ KBUILD_AFLAGS_MODULE		+= -Wa,-mla-global-with-abs
 KBUILD_CFLAGS_MODULE		+= -fplt -Wa,-mla-global-with-abs,-mla-local-with-abs
 endif
 
-KBUILD_AFLAGS			+= $(call cc-option,-mno-relax) $(call cc-option,-Wa$(comma)-mno-relax)
-KBUILD_CFLAGS			+= $(call cc-option,-mno-relax) $(call cc-option,-Wa$(comma)-mno-relax)
 KBUILD_AFLAGS			+= $(call cc-option,-mthin-add-sub) $(call cc-option,-Wa$(comma)-mthin-add-sub)
 KBUILD_CFLAGS			+= $(call cc-option,-mthin-add-sub) $(call cc-option,-Wa$(comma)-mthin-add-sub)
 

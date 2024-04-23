@@ -845,6 +845,34 @@ elf_create_prefix_symbol(struct elf *elf, struct symbol *orig, long size)
 	return sym;
 }
 
+struct symbol *
+elf_create_nameless_symbol(struct elf *elf, struct section *sec, unsigned long value)
+{
+	static int idx;
+	static const char *name = ".Lobjtool";
+	struct symbol *sym = calloc(1, sizeof(*sym));
+
+	if (!sym) {
+		perror("malloc");
+		return NULL;
+	}
+
+	if (!idx)
+		idx = elf_add_string(elf, NULL, (char *)name);
+
+	sym->name = (char *)name;
+	sym->sec = sec;
+	sym->sym.st_name = idx;
+	sym->sym.st_info = GELF_ST_INFO(STB_LOCAL, STT_NOTYPE);
+	sym->sym.st_value = value;
+
+	sym = __elf_create_symbol(elf, sym);
+	if (sym)
+		elf_add_symbol(elf, sym);
+
+	return sym;
+}
+
 static struct reloc *elf_init_reloc(struct elf *elf, struct section *rsec,
 				    unsigned int reloc_idx,
 				    unsigned long offset, struct symbol *sym,
@@ -896,7 +924,16 @@ struct reloc *elf_init_reloc_text_sym(struct elf *elf, struct section *sec,
 		return NULL;
 	}
 
-	if (!sym) {
+	if (PREFER_SYM) {
+		/*
+		 * Rather than creating reloc by "sec + offset", LoongArch prefers
+		 * to create reloc by "symbol" because it has linker relaxation.
+		 */
+		sym = elf_create_nameless_symbol(elf, insn_sec, addend);
+		if (!sym)
+			return NULL;
+		addend = 0;
+	} else if (!sym) {
 		/*
 		 * Due to how weak functions work, we must use section based
 		 * relocations. Symbol based relocations would result in the
