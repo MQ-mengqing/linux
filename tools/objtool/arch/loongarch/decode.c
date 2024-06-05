@@ -354,3 +354,111 @@ void arch_initial_func_cfi_state(struct cfi_init_state *state)
 	state->cfa.base = CFI_SP;
 	state->cfa.offset = 0;
 }
+
+static int update_cfi_state_regs(struct instruction *insn,
+				 struct cfi_state *cfi,
+				 struct stack_op *op)
+{
+	struct cfi_reg *cfa = &cfi->cfa;
+
+	if (cfa->base != CFI_SP && cfa->base != CFI_SP_INDIRECT)
+		return 0;
+
+	/* addi.d sp, sp, imm */
+	if (op->dest.type == OP_DEST_REG && op->src.type == OP_SRC_ADD &&
+	    op->dest.reg == CFI_SP && op->src.reg == CFI_SP)
+		cfa->offset -= op->src.offset;
+
+	return 0;
+}
+
+static void save_reg(struct cfi_state *cfi, unsigned char reg, int base,
+		     int offset)
+{
+	if (arch_callee_saved_reg(reg) &&
+	    cfi->regs[reg].base == CFI_UNDEFINED) {
+		cfi->regs[reg].base = base;
+		cfi->regs[reg].offset = offset;
+	}
+}
+
+static void restore_reg(struct cfi_state *cfi, unsigned char reg)
+{
+	cfi->regs[reg].base = CFI_UNDEFINED;
+	cfi->regs[reg].offset = 0;
+}
+
+int arch_update_cfi_state(struct instruction *insn,
+			  struct instruction *next_insn,
+			  struct cfi_state *cfi, struct stack_op *op)
+{
+	struct cfi_reg *cfa = &cfi->cfa;
+	struct cfi_reg *regs = cfi->regs;
+
+	/* ignore UNWIND_HINT_UNDEFINED regions */
+	if (cfi->force_undefined)
+		return 0;
+
+	if (cfa->base == CFI_UNDEFINED) {
+		if (insn_func(insn)) {
+			WARN_INSN(insn, "undefined stack state");
+			return -1;
+		}
+		return 0;
+	}
+
+	if (cfi->type == UNWIND_HINT_TYPE_REGS)
+		return update_cfi_state_regs(insn, cfi, op);
+
+	switch (op->dest.type) {
+	case OP_DEST_REG:
+		switch (op->src.type) {
+		case OP_SRC_ADD:
+			if (op->dest.reg == CFI_SP && op->src.reg == CFI_SP) {
+				/* addi.d sp, sp, imm */
+				cfi->stack_size -= op->src.offset;
+				if (cfa->base == CFI_SP)
+					cfa->offset -= op->src.offset;
+			} else if (op->dest.reg == CFI_FP && op->src.reg == CFI_SP) {
+				/* addi.d fp, sp, imm */
+				if (cfa->base == CFI_SP && cfa->offset == op->src.offset) {
+					cfa->base = CFI_FP;
+					cfa->offset = 0;
+				}
+			} else if (op->dest.reg == CFI_SP && op->src.reg == CFI_FP) {
+				/* addi.d sp, fp, imm */
+				if (cfa->base == CFI_FP && cfa->offset == 0) {
+					cfa->base = CFI_SP;
+					cfa->offset = -op->src.offset;
+				}
+			}
+			break;
+		case OP_SRC_REG_INDIRECT:
+			/* ld.d _reg, sp, imm */
+			if (op->src.reg == CFI_SP &&
+				op->src.offset == (regs[op->dest.reg].offset + cfi->stack_size)) {
+				restore_reg(cfi, op->dest.reg);
+				/* Gcc may not restore sp, we adjust it directly. */
+				if (cfa->base == CFI_FP && cfa->offset == 0) {
+					cfa->base = CFI_SP;
+					cfa->offset = cfi->stack_size;
+				}
+			}
+			break;
+		default:
+			break;
+		}
+		break;
+	case OP_DEST_REG_INDIRECT:
+		if (op->src.type == OP_SRC_REG) {
+			/* st.d _reg, sp, imm */
+			save_reg(cfi, op->src.reg, CFI_CFA, op->dest.offset - cfi->stack_size);
+		}
+		break;
+	default:
+		WARN_FUNC("unknown stack-related instruction", insn->sec, insn->offset);
+		return -1;
+	}
+
+	return 0;
+}

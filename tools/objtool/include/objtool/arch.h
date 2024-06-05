@@ -96,4 +96,8 @@ int arch_rewrite_retpolines(struct objtool_file *file);
 
 bool arch_pc_relative_reloc(struct reloc *reloc);
 
+int arch_update_cfi_state(struct instruction *insn,
+			  struct instruction *next_insn,
+			  struct cfi_state *cfi, struct stack_op *op);
+
 #endif /* _ARCH_H */
