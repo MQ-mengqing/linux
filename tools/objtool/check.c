@@ -170,12 +170,38 @@ static bool is_jump_table_jump(struct instruction *insn)
 	       insn_jump_table(alt_group->orig_group->first_insn);
 }
 
-static bool is_sibling_call(struct instruction *insn)
+static struct reloc *insn_reloc(struct objtool_file *file, struct instruction *insn)
+{
+	struct reloc *reloc;
+
+	if (insn->no_reloc)
+		return NULL;
+
+	if (!file)
+		return NULL;
+
+	reloc = find_reloc_by_dest_range(file->elf, insn->sec,
+					 insn->offset, insn->len);
+	if (!reloc) {
+		insn->no_reloc = 1;
+		return NULL;
+	}
+
+	return reloc;
+}
+
+static bool is_sibling_call(struct objtool_file *file, struct instruction *insn)
 {
 	/*
 	 * Assume only STT_FUNC calls have jump-tables.
 	 */
 	if (insn_func(insn)) {
+		struct reloc *reloc = insn_reloc(file, insn);
+
+		/* Disallow sibling calls into STT_NOTYPE if it is local lable */
+		if (reloc && reloc->sym->local_label)
+			return false;
+
 		/* An indirect jump is either a sibling call or a jump to a table. */
 		if (insn->type == INSN_JUMP_DYNAMIC)
 			return !is_jump_table_jump(insn);
@@ -295,7 +321,7 @@ static bool __dead_end_function(struct objtool_file *file, struct symbol *func,
 	 * of the sibling call returns.
 	 */
 	func_for_each_insn(file, func, insn) {
-		if (is_sibling_call(insn)) {
+		if (is_sibling_call(file, insn)) {
 			struct instruction *dest = insn->jump_dest;
 
 			if (!dest)
@@ -705,7 +731,7 @@ static int create_static_call_sections(struct objtool_file *file)
 		if (!elf_init_reloc_data_sym(file->elf, sec,
 					     idx * sizeof(*site) + 4,
 					     (idx * 2) + 1, key_sym,
-					     is_sibling_call(insn) * STATIC_CALL_SITE_TAIL))
+					     is_sibling_call(file, insn) * STATIC_CALL_SITE_TAIL))
 			return -1;
 
 		idx++;
@@ -1253,26 +1279,6 @@ __weak bool arch_is_embedded_insn(struct symbol *sym)
 	return false;
 }
 
-static struct reloc *insn_reloc(struct objtool_file *file, struct instruction *insn)
-{
-	struct reloc *reloc;
-
-	if (insn->no_reloc)
-		return NULL;
-
-	if (!file)
-		return NULL;
-
-	reloc = find_reloc_by_dest_range(file->elf, insn->sec,
-					 insn->offset, insn->len);
-	if (!reloc) {
-		insn->no_reloc = 1;
-		return NULL;
-	}
-
-	return reloc;
-}
-
 static void remove_insn_ops(struct instruction *insn)
 {
 	struct stack_op *op, *next;
@@ -1518,10 +1524,15 @@ static int add_jump_destinations(struct objtool_file *file)
 			 * External sibling call or internal sibling call with
 			 * STT_FUNC reloc.
 			 */
-			ret = add_call_dest(file, insn, reloc->sym, true);
-			if (ret)
-				return ret;
-			continue;
+			if (reloc->sym->local_label) {
+				dest_sec = insn->sec;
+				dest_off = arch_jump_destination(insn);
+			} else {
+				ret = add_call_dest(file, insn, reloc->sym, true);
+				if (ret)
+					return ret;
+				continue;
+			}
 		} else if (reloc->sym->sec->idx) {
 			dest_sec = reloc->sym->sec;
 			dest_off = reloc->sym->sym.st_value +
@@ -3683,7 +3694,7 @@ static int validate_branch(struct objtool_file *file, struct symbol *func,
 
 		case INSN_JUMP_CONDITIONAL:
 		case INSN_JUMP_UNCONDITIONAL:
-			if (is_sibling_call(insn)) {
+			if (is_sibling_call(file, insn)) {
 				ret = validate_sibling_call(file, insn, &state);
 				if (ret)
 					return ret;
@@ -3704,7 +3715,7 @@ static int validate_branch(struct objtool_file *file, struct symbol *func,
 
 		case INSN_JUMP_DYNAMIC:
 		case INSN_JUMP_DYNAMIC_CONDITIONAL:
-			if (is_sibling_call(insn)) {
+			if (is_sibling_call(file, insn)) {
 				ret = validate_sibling_call(file, insn, &state);
 				if (ret)
 					return ret;
@@ -3880,7 +3891,7 @@ static int validate_unret(struct objtool_file *file, struct instruction *insn)
 
 		case INSN_JUMP_UNCONDITIONAL:
 		case INSN_JUMP_CONDITIONAL:
-			if (!is_sibling_call(insn)) {
+			if (!is_sibling_call(file, insn)) {
 				if (!insn->jump_dest) {
 					WARN_INSN(insn, "unresolved jump target after linking?!?");
 					return 1;

@@ -10,6 +10,30 @@
 #include <objtool/warn.h>
 #include <objtool/endianness.h>
 
+static inline int get_secname(Elf *elf, GElf_Sym *sym, size_t shstrtab_idx, char **pname)
+{
+	Elf_Scn *scn;
+	GElf_Shdr sh;
+
+	scn = elf_getscn(elf, sym->st_shndx);
+	if (!scn) {
+		ERROR_ELF("elf_getscn");
+		return -1;
+	}
+
+	if (!gelf_getshdr(scn, &sh)) {
+		ERROR_ELF("gelf_getshdr");
+		return -1;
+	}
+
+	*pname = elf_strptr(elf, shstrtab_idx, sh.sh_name);
+	if (!*pname) {
+		ERROR_ELF("elf_strptr");
+		return -1;
+	}
+	return 0;
+}
+
 int orc_dump(const char *filename)
 {
 	int fd, nr_entries, i, *orc_ip = NULL, orc_size = 0;
@@ -25,6 +49,7 @@ int orc_dump(const char *filename)
 	GElf_Sym sym;
 	Elf_Data *data, *symtab = NULL, *rela_orc_ip = NULL;
 	struct elf dummy_elf = {};
+	unsigned long long offset;
 
 	elf_version(EV_CURRENT);
 
@@ -106,6 +131,8 @@ int orc_dump(const char *filename)
 	nr_entries = orc_size / sizeof(*orc);
 	for (i = 0; i < nr_entries; i++) {
 		if (rela_orc_ip) {
+			offset = (unsigned long long)rela.r_addend;
+
 			if (!gelf_getrela(rela_orc_ip, i, &rela)) {
 				ERROR_ELF("gelf_getrela");
 				return -1;
@@ -117,31 +144,22 @@ int orc_dump(const char *filename)
 			}
 
 			if (GELF_ST_TYPE(sym.st_info) == STT_SECTION) {
-				scn = elf_getscn(elf, sym.st_shndx);
-				if (!scn) {
-					ERROR_ELF("elf_getscn");
+				if (get_secname(elf, &sym, shstrtab_idx, &name))
 					return -1;
-				}
-
-				if (!gelf_getshdr(scn, &sh)) {
-					ERROR_ELF("gelf_getshdr");
-					return -1;
-				}
-
-				name = elf_strptr(elf, shstrtab_idx, sh.sh_name);
-				if (!name) {
-					ERROR_ELF("elf_strptr");
-					return -1;
-				}
 			} else {
 				name = elf_strptr(elf, strtab_idx, sym.st_name);
 				if (!name) {
 					ERROR_ELF("elf_strptr");
 					return -1;
 				}
+				if (!strcmp(name, ".Lobjtool")) {
+					if (get_secname(elf, &sym, shstrtab_idx, &name))
+						return -1;
+					offset = (unsigned long long)sym.st_value;
+				}
 			}
 
-			printf("%s+%llx:", name, (unsigned long long)rela.r_addend);
+			printf("%s+%llx:", name, offset);
 
 		} else {
 			printf("%llx:", (unsigned long long)(orc_ip_addr + (i * sizeof(int)) + orc_ip[i]));
